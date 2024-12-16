@@ -1,5 +1,5 @@
 """
-V.13
+V.15
 Initial Base-Case Model ready for Optimisation analysis
 Including the following units:
 * DAC - 10,000 t_CO2/y
@@ -14,7 +14,11 @@ Including the following units:
 * DFM heat demand in reaction stage
 * Air-Cooler
 * Flash Drum Separator
-* Integers to Reals
+* Integers to Reals (for time and temperature)
+* Integers to Reals (for time and number of equipment)
+* electricity & sorbent prices changes
+* Modified for Reporing & Sensitivity
+
 """
 import matplotlib.pyplot as plt
 import numpy as np
@@ -126,6 +130,7 @@ ADS_units = {
     2 : 'TVSA'
     }
 # Costing ref.: Towler & Sinnott, 2021 , Ref. for Air-Cooler: Seider et al., 2017
+# lower limits to be corrected with modifications in equations to enforce the selection of S_lower as min.
 equipment_size_ref = {
     'Compressor_Centrifugal'  : {'S_lower' : 1 ,'S_upper' : 30000 , 'a' : 490000 , 'b' : 16800 , 'n' : 0.6},    # kW
     'Pump'                  : {'S_lower' : 1 ,'S_upper' : 2500 , 'a' : 950 , 'b' : 1770 , 'n' : 0.6},           # kW
@@ -174,7 +179,7 @@ methane_production = 30 # kmol/h
 
 pi = 3.14
 M = 1e10                    #BigM
-interest_rate = 0.000000012 # interest rate can be deleted in DAC
+interest_rate = 0.000000000001 # interest rate can be deleted in DAC
 plant_life = 20             # years
 operating_hours = 330*24
 CEPCI_2023 = 900
@@ -187,8 +192,8 @@ T_amb = 293                 # ambient temperature K
 T_air_In = 25               # ambient temperature °C
 T_product = 40              # Final product temperature
 
-kWh_cost = 0.22             # [$/kWh] Electricity cost
-W_cost = 0.22/3600          # [$/kJ] Electricity cost
+kWh_cost = 0.05             # [$/kWh] Electricity cost (Sendi (2022))
+W_cost = kWh_cost/3600          # [$/kJ] Electricity cost
 Water_cost = 1.1*1.72*1e-3*18.02e-3*1000 # [$/€][€/kg][kg/mol] = [$/kmol] electrolyzer statistisches Bundesamt(link)
 p_fuel = 5.6869e-06         # $/kJ -- Towler et. al
 n_boiler = 0.8              # Boiler efficiency
@@ -203,6 +208,7 @@ PEMEL_unit_cost = 483840    # kJ/kmole H2
 AEL_CAPEX = 950             # $/kW
 SOEL_CAPEX = 4200           # $/kW
 PEMEL_CAPEX = 1450          # $/kW
+Q_Furnace = 275             # kWh heat duty based on outlet H2 @ 350C
 
 AEL_T = 25                  # AEL operating Temperature
 SOEL_T = 700                # AEL operating Temperature
@@ -215,7 +221,10 @@ T_HP = 250
 #U_Boiler = 88.57 #kJ/h-m2-C for Steam-Flue gas system, based on HYSYS calculations ** SHOULD be updated
 #U_Boiler = 118 #kJ/h-m2-C for LP Steam-Flue gas system, based on HYSYS calculations
 #U_Boiler = 105.7 #kJ/h-m2-C for MP Steam-Flue gas system, based on HYSYS calculations
-U_Boiler = 154 #kJ/h-m2-C update Oct. 2023
+U_Boiler = 118 #kJ/h-m2-C update Feb. 2024
+U_Boiler_LP = 118 #kJ/h-m2-C to be added to the superstructure
+U_Boiler_MP = 106 #kJ/h-m2-C to be added to the superstructure
+U_Boiler_HP = 86 #kJ/h-m2-C to be added to the superstructure
 DT_min = 20   # min, Temperature difference between Hot & Cold streams in HEX
 
 air_Mu = 1.85e-05 #average dynamic viscosity Pa.s
@@ -239,9 +248,10 @@ Ri = 0.00105
 cpv_monolith = 2.457e3 # kJ/m3.K
 cpw_monolith = 0.022e6 # kJ/kmol (Sinha et al 2017)
 #Ri = 0.00105
-DFM_unit_cost = 272 #$/kg DFM 15% Ni,1% Ru,10% K2O,74% CeO2-Al2O3 (20%-80%)
+#DFM_unit_cost = 272 #$/kg DFM 15% Ni,1% Ru,10% K2O,74% CeO2-Al2O3 (20%-80%)
+DFM_unit_cost = 156.2 #$/kg DFM 15% Ni,1% Ru,10% K2O,74% CeO2-Al2O3 (20%-80%)
 #DFM_unit_cost = 15 # $/kg (based on Sinha et al., 2017 for MIL-101 price          > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
-Sorbent_unit_cost = 15 # $/kg (based on Sinha et al., 2017 for MIL-101 price       > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+Sorbent_unit_cost = 40 # $/kg (based on Sinha et al., 2017 for MIL-101 price       > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
 #DFM_SPWeight = 18.511 #kg of DFM on m3 of DFM coat
 #DFM_SPWeight = 57.362 #kg of washcoat on m3 of monolith
 DFM_SPWeight = 85.43 #kg of washcoat per m3 of monolith (Abdallah et al.,(2023))
@@ -249,17 +259,19 @@ DFM_SPWeight = 85.43 #kg of washcoat per m3 of monolith (Abdallah et al.,(2023))
 Sorbent_SPWeight = 85.43 #kg of washcoat per m3 of monolith (Abdallah et al.,(2023))
 #Sorbent_SPWeight = 210 #kg of washcoat per m3 of monolith (Duyar et al., 2014)
 #q_dfm_eq = 0.0014 #Simillar to MIL-101 > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
-q_dfm_eq = 1.14934e-3 #100% of DFM amb. ads. capacity acc. to to Abdallah et al.,(2023) 1%Ru, 10%Na2O/γ-Al2O3 DFM > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+#q_dfm_eq = 1.14934e-3 #100% of DFM amb. ads. capacity acc. to to Abdallah et al.,(2023) 1%Ru, 10%Na2O/γ-Al2O3 DFM > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+q_dfm_eq = 1.152e-3 #100% of DFM amb. ads. capacity acc. to to Abdallah et al.,(2023) 1%Ru, 10%Na2O/γ-Al2O3 DFM > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
 #q_dfm_eq = 6.21e-4 #50% of DFM amb. ads. capacity acc. to to Abdallah et al.,(2023) 1%Ru, 10%Na2O/γ-Al2O3 DFM > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
 #q_dfm_eq = 4.9e-4 #kmol CO2 adsorbed per kg of DFM
 #q_dfm_eq = 2.05e-3 #kmol CO2 adsorbed per kg of DFM Goldman et al., 2023       > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
 #q_dfm_eq = 2.71e-3 #kmol CO2 adsorbed per kg of DFM - Hypothetical value based on MIL-101 results
-k_ads = 0.00023654 # based on curve fitting data on 1%Ru, 10%Na2O/γ-Al2O3 DFM acc. to Abdallah et al.,(2023) > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+#k_ads = 0.00023654 # based on curve fitting data on 1%Ru, 10%Na2O/γ-Al2O3 DFM acc. to Abdallah et al.,(2023) > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+k_ads = 0.00025 # based on curve fitting data on 1%Ru, 10%Na2O/γ-Al2O3 DFM acc. to Abdallah et al.,(2023) > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
 #k_ads = 0.01 # adsorption rate constant  0.00023654
 k_ads_TVSA = 0.0002 # adsorption mass-transfer rate constant for TVSA >> Stampi-Bombelli et al., (2020) > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
 #k_ads_TVSA = 0.01 # adsorption mass-transfer rate constant for TVSA for confirmation report (min: 0.0035 for base case)
 cp_DFM = 0.718 #kJ/kg.K
-T_reaction = 523 #Deg C
+T_reaction = 623 #Deg C
 DH_ads = 151.79 #NiRuNa/CeAl : -151.79 kJ/mol Enthalpy of adsorption
 #DH_ads = 121.29 #NiRuK/CeAl: -121.29 kJ/mol Enthalpy of adsorption
 #DH_ads = 31.17 #NiRuCa/CeAl: -31.17 kJ/mol Enthalpy of adsorption
@@ -373,23 +385,20 @@ m.T = Var(m.K, domain = NonNegativeReals, initialize={7: 350, 8: 170}, bounds=(0
 #m.T = Var(m.K, domain = NonNegativeIntegers, bounds=(1,400), initialize={7: 350, 8: 170})
 m.T_sat = Param(initialize=150, mutable=False) #Set 150 for LP, 200 for MP and 250 for HP
 
-m.T_des = Var(domain=NonNegativeReals, initialize=120, bounds=(80,120))         # Desorption Temperature C          #||||||||||||||||||||||||||||||||||||
+m.T_des = Var(domain=NonNegativeReals, initialize=80, bounds=(80,120))         # Desorption Temperature C                   #||||||||||||||||||||||||||||||||||||
 
-#m.init001 = Constraint(expr= m.T_des == 120)   
-
-m.T_air_Out = Var(domain=NonNegativeReals, initialize=37, bounds=(35,40))      # Air-Cooler Outlet Air Temperature °C                                                                      #||||||||||||||||||||||||||||||||||||
-m.T_Hot_In = Var(domain=NonNegativeReals)                                       # Air-Cooler Outlet Air Temperature °C                                                                      #||||||||||||||||||||||||||||||||||||
+m.T_air_Out = Var(domain=NonNegativeReals, initialize=37, bounds=(35,40))      # Air-Cooler Outlet Air Temperature °C       #||||||||||||||||||||||||||||||||||||
+m.T_Hot_In = Var(domain=NonNegativeReals)                                       # Air-Cooler Outlet Air Temperature °C      #||||||||||||||||||||||||||||||||||||
 m.T_Hot_Out = Var(domain=NonNegativeReals)                                      # Air-Cooler Outlet Air Temperature °C
 m.LMTD_AC = Var(domain=NonNegativeReals)                                        # LMTD °F
 
-m.p_vac = Var(domain=NonNegativeReals, initialize=0.09, bounds=(0.005,0.09))    # vacuum pressure MPa
-#m.init002 = Constraint(expr= m.p_vac == 0.09)                                                                      #||||||||||||||||||||||||||||||||||||
+m.p_vac = Var(domain=NonNegativeReals, initialize=0.09, bounds=(0.005,0.09))    # vacuum pressure MPa                       #||||||||||||||||||||||||||||||||||||
 m.DP_fan = Var(m.A, domain=NonNegativeReals)    # Fans produced head (pa)
 m.DP = Var(domain=NonNegativeReals)             # reactor pressure drop (pa)
 m.DP_cont = Var(domain=NonNegativeReals)        # Contactor pressure drop (pa)
 m.DP_AC = Var(domain=NonNegativeReals)          # Air-Cooler air-side pressure drop (inch of water)
 
-m.v = Var(domain=NonNegativeReals, bounds=(0.1,10))    # air average velocity inside monolith channels   
+m.v = Var(domain=NonNegativeReals, bounds=(0.1,10))         # air average velocity inside monolith channels   
 m.v_cont = Var(domain=NonNegativeReals, bounds=(0.1,10))    # air average velocity inside Contactors monolith channels
 m.Q_air = Var(domain=NonNegativeReals)
 m.Q_air2 = Var(domain=NonNegativeReals)            
@@ -416,16 +425,16 @@ m.q_ads = Var(m.SS)         # kmole of CO2 / kg sorbent in T_amb
 m.q_des = Var(m.SS)         # kmole of CO2 / kg sorbent in T_des
 m.q_dfm = Var(domain=NonNegativeReals, bounds=(0,0.99*q_dfm_eq))                    # kmole of CO2 / kg DFM
 
-m.t_ads = Var(domain=NonNegativeIntegers, initialize=1000, bounds=(1000,1000))      # adsorption time             # ||||||||||||||||||||||||||||||||||||||||||||###
-m.t_TVSA = Var(domain=NonNegativeIntegers, initialize=1000, bounds=(1000,1000))     # adsorption time
-m.t_ads_TVSA = Var(domain=NonNegativeIntegers, bounds=(1,1000))                     # adsorption time (not in use) x x x x x x x x x x x x x
+m.t_ads = Var(domain=NonNegativeReals, initialize=1000, bounds=(1,3000))         # adsorption time             # ||||||||||||||||||||||||||||||||||||||||||||###
+m.t_TVSA = Var(domain=NonNegativeReals, initialize=1000, bounds=(1,3000))        # adsorption time
+m.t_ads_TVSA = Var(domain=NonNegativeReals, bounds=(1,3000))                        # adsorption time (not in use) x x x x x x x x x x x x x
 
 m.S_react = Var(domain=NonNegativeReals, bounds=(Sl_react,Su_react))                # Size of each reactor (m3)
 m.S_contactor = Var(domain=NonNegativeReals, bounds=(Sl_contactor,Su_contactor))                                 # Total Size of contactors (m3)
 m.S_Vessel = Var(domain=NonNegativeReals, bounds=(Sl_Vessel,Su_Vessel))             # Total Size of contactors (m3)
 
-#m.S_vpump = Var(domain=NonNegativeReals, bounds=(Sl_vpump,Su_vpump))               # Size of each vpump (kW)
-#m.S_compressor = Var(domain=NonNegativeReals, bounds=(Sl_compressor,Su_compressor)) # Size of each compressor (kW)
+#m.S_vpump = Var(domain=NonNegativeReals, bounds=(Sl_vpump,Su_vpump))                   # Size of each vpump (kW)
+#m.S_compressor = Var(domain=NonNegativeReals, bounds=(Sl_compressor,Su_compressor))    # Size of each compressor (kW)
 m.S_vpump = Var(domain=NonNegativeReals)        # Size of each vpump (kW)
 m.S_compressor = Var(domain=NonNegativeReals) # Size of each compressor (kW)
 
@@ -435,25 +444,20 @@ m.power_fan3 = Var(domain=NonNegativeReals)                                     
 m.W_TVSA = Var(domain=NonNegativeReals)                                             # TVSA Total power requirement
 m.BHP_Aircooler = Var(domain=NonNegativeReals)                                      # Air-Cooler power requirement (horse power)
 
-m.N_vpump = Var(domain=NonNegativeIntegers, initialize=1, bounds=(1,20))            # Number of vacuum pumps
-m.N_compressor = Var(domain=NonNegativeIntegers, initialize=1, bounds=(1,20))       # Number of compressor
+m.N_vpump = Var(domain=NonNegativeReals, initialize=1, bounds=(1,20))            # Number of vacuum pumps
+m.N_compressor = Var(domain=NonNegativeReals, initialize=1, bounds=(1,20))       # Number of compressor
 
-m.N_react = Var(domain=NonNegativeIntegers, initialize=28, bounds=(1,50))           # Number of reactors (Min: ) >>>>>>>>>>>>>
-m.init003 = Constraint(expr= m.N_react == 16)                                                                           #|||||||||||||||||||||||||||||||||||| ##########
-m.N_contactor = Var(domain=NonNegativeIntegers, initialize=20, bounds=(1,30))       # Number of TVSA contactors (Min:14 ) >>>>>>>>>>
-m.init004 = Constraint(expr= m.N_contactor == 16)                                                                       #|||||||||||||||||||||||||||||||||||| ##########
-m.N_Vessel = Var(domain=NonNegativeIntegers, bounds=(1,5))                          # Number of Vertical Pressure
+m.N_react = Var(domain=NonNegativeReals, initialize=28, bounds=(1,50))           # Number of reactors (Min: )           #|||||||||||||||||||||||||||||||||||| ##########
+m.N_contactor = Var(domain=NonNegativeReals, initialize=20, bounds=(1,30))       # Number of TVSA contactors (Min:14 )  #|||||||||||||||||||||||||||||||||||| ##########
+m.N_Vessel = Var(domain=NonNegativeReals, bounds=(1,5))                          # Number of Vertical Pressure
 
-m.N_Boiler = Var(domain=NonNegativeIntegers, bounds=(1,10))                         # Number of Boilers/HEX
-m.N_Aircooler = Var(domain=NonNegativeIntegers, bounds=(1,10))                      # Number of Air-Coolers
+m.N_Boiler = Var(domain=NonNegativeReals, bounds=(1,10))                         # Number of Boilers/HEX
+m.N_Aircooler = Var(domain=NonNegativeReals, bounds=(1,10))                      # Number of Air-Coolers
 
-m.N_fan1 = Var(domain=NonNegativeIntegers, initialize=20, bounds=(10,100))          # Number of fans in system 1  Min:10
-#m.init005 = Constraint(expr= m.N_fan1 == 20)                                                                           #||||||||||||||||||||||||||||||||||||
-m.N_fan2 = Var(domain=NonNegativeIntegers, initialize=46, bounds=(1,100))           # Number of fans in system 2
-#m.init006 = Constraint(expr= m.N_fan2 == 46)                                                                           #||||||||||||||||||||||||||||||||||||
-m.N_fan3 = Var(domain=NonNegativeIntegers, initialize=3, bounds=(1,20))             # Number of fans in system 3
-m.init007 = Constraint(expr= m.N_fan3 == 3)                                                                             #||||||||||||||||||||||||||||||||||||
-m.N_fan = Var(domain=NonNegativeIntegers, initialize=20, bounds=(1,100))            # Total Number of fans
+m.N_fan1 = Var(domain=NonNegativeReals, initialize=20, bounds=(10,100))          # Number of fans in system 1  Min:10   #||||||||||||||||||||||||||||||||||||
+m.N_fan2 = Var(domain=NonNegativeReals, initialize=46, bounds=(1,100))           # Number of fans in system 2           #||||||||||||||||||||||||||||||||||||
+m.N_fan3 = Var(domain=NonNegativeReals, initialize=3, bounds=(1,20))             # Number of fans in system 3           #||||||||||||||||||||||||||||||||||||
+m.N_fan = Var(domain=NonNegativeReals, initialize=20, bounds=(1,100))            # Total Number of fans                 #||||||||||||||||||||||||||||||||||||
 
 m.DFM_Weight = Var(domain=NonNegativeReals)                                         # Total Weight of DFM
 m.DFM_Volume = Var(domain=NonNegativeReals)                                         # Total Volume of DFM coat on monolith
@@ -465,18 +469,13 @@ m.A_Boiler = Var(domain=NonNegativeReals, bounds=(Sl_Boiler,Su_Boiler))         
 m.A_Aircooler = Var(domain=NonNegativeReals)                                        # Required Area of the Air-Cooler (ft2)
 m.A_AC_av = Var(domain=NonNegativeReals)                                            # Available heat transfer Area of the Air-Cooler (ft2)
 m.D_mon = Var(domain=NonNegativeReals)                                              # Monolith cell diameter
-m.D = Var(domain=NonNegativeReals, initialize=4, bounds=(0.5,4))                    # DFM reactor Diameter
-m.init008 = Constraint(expr= m.D == 4)                                                                                  #||||||||||||||||||||||||||||||||||||
-m.D_cont = Var(domain=NonNegativeReals, initialize=1.5, bounds=(0.5,4))             # Contactor Diameter (Min:2 for N:15)
-#m.init009 = Constraint(expr= m.D_cont == 1.5)                                                                          #||||||||||||||||||||||||||||||||||||
-m.L = Var(domain=NonNegativeReals, initialize=1, bounds=(1,5))                      # Reactor height/length
-#m.init010 = Constraint(expr= m.L == 3)                                                                                 #||||||||||||||||||||||||||||||||||||
-m.L_cont = Var(domain=NonNegativeReals, initialize=1, bounds=(1,5))                 # Contactor height/length (Max:8.5 for Fan1)
-#m.init011 = Constraint(expr= m.L_cont == 3)                                                                            #||||||||||||||||||||||||||||||||||||
+m.D = Var(domain=NonNegativeReals, initialize=4, bounds=(0.5,4))                    # DFM reactor Diameter                  #||||||||||||||||||||||||||||||||||||
+m.D_cont = Var(domain=NonNegativeReals, initialize=1.5, bounds=(0.5,4))             # Contactor Diameter (Min:2 for N:15)   #||||||||||||||||||||||||||||||||||||
+m.L = Var(domain=NonNegativeReals, initialize=1, bounds=(1,5))                      # Reactor height/length                 #||||||||||||||||||||||||||||||||||||
+m.L_cont = Var(domain=NonNegativeReals, initialize=1, bounds=(1,5))                 # Contactor height/length (Max:8.5 for Fan1) #||||||||||||||||||||||||||||||||||||
 
 m.D_Vessel = Var(domain=NonNegativeReals)                                           # Vessel Diameter, m
 m.L_Vessel = Var(domain=NonNegativeReals)                                           # Vessel Height, m
-
 
 m.FH1 = Var(domain=NonNegativeReals)
 m.FH2 = Var(domain=NonNegativeReals)
@@ -515,6 +514,7 @@ m.OPEX_FAN = Var(domain=NonNegativeReals)
 m.OPEX_TVSA = Var(domain=NonNegativeReals)
 m.OPEX_DFM = Var(domain=NonNegativeReals)
 m.OPEX_Aircooler = Var(domain=NonNegativeReals)
+m.OPEX_Furnace = Var(domain=NonNegativeReals)
 
 m.Ce_fan1 = Var(domain=NonNegativeReals)                     # purchased equipment cost, 2013 basis
 m.Ce_fan2 = Var(domain=NonNegativeReals)                     # purchased equipment cost, 2013 basis
@@ -531,7 +531,6 @@ m.Ce_PBR = Var(domain=NonNegativeReals)                      # purchased Reactor
 m.Ce_Furnace = Var(domain=NonNegativeReals)                  # purchased Furnace cost, 2007 basis
 m.Ce_Aircooler = Var(domain=NonNegativeReals)                # purchased Furnace cost, 2013 basis
 m.Ce_PVessel = Var(domain=NonNegativeReals)                  # purchased Pressure vessel cost, 2007 basis
-
 
 
 m.slack=Var()
@@ -673,10 +672,6 @@ m.constn03 = Constraint(m.C, rule = lambda m, c : m.x[21,c] <= M * m.y_H2[1])
 m.constn04 = Constraint(m.C, rule = lambda m, c : m.x[23,c] <= M * m.y_H2[2])
 m.constn05 = Constraint(m.C, rule = lambda m, c : m.x[25,c] <= M * m.y_H2[3])
 m.constn06 = Constraint(expr = m.y_H2[1] + m.y_H2[2] + m.y_H2[3] == 1)
-m.constn66666 = Constraint(expr = m.y_H2[2] == 1)           #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-# Furnace
-m.constn77777 = Constraint(expr = m.y_furnace == 0)         #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 m.constT01 = Constraint(m.C, rule = lambda m, c : m.T[5] == m.T[22] + m.T[24] + m.T[26])
 m.constT02 = Constraint(m.C, rule = lambda m, c : m.T[22] == AEL_T * m.y_H2[1])
@@ -693,7 +688,6 @@ m.constn12 = Constraint(m.C, rule = lambda m, c : m.x[12,c] == m.x[11,c])
 m.constn13 = Constraint(m.C, rule = lambda m, c : m.x[14,c] == m.x[13,c])
 m.constn14 = Constraint(m.C, rule = lambda m, c : m.x[16,c] == m.x[15,c])
 m.constn15 = Constraint(m.C, rule = lambda m, c : m.x[6,c] == m.x[12,c] + m.x[14,c] + m.x[16,c])
-m.constn11111 = Constraint(expr = m.y_f['f3'] == 1)          #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 # Adsorption
 m.constn16 = Constraint(m.C, rule = lambda m, c : m.x[6,c] == m.x[61,c] + m.x[64,c])
@@ -701,8 +695,6 @@ m.constn17 = Constraint(m.C, rule = lambda m, c : m.x[7,c] == m.x[636,c] + m.x[6
 m.constn18 = Constraint(m.C, rule = lambda m, c : m.x[61,c] <= M * m.y_AD[1])
 m.constn19 = Constraint(m.C, rule = lambda m, c : m.x[64,c] <= M * m.y_AD[2])
 m.constn20 = Constraint(expr = m.y_AD[1] + m.y_AD[2] == 1)
-m.constn200000 = Constraint(expr = m.y_AD[1] == 1)          #>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 
 # DFM Mixer
 m.constn21 = Constraint(m.C, rule = lambda m, c : m.x[635,c] == m.x[63,c] + m.x[51,c])
@@ -724,7 +716,6 @@ m.constn30 = Constraint(expr = m.x[91,'H2O'] <= M * m.y_stg[1])
 m.constn31 = Constraint(expr = m.x[92,'H2O'] <= M * m.y_stg[2])
 m.constn32 = Constraint(expr = m.x[93,'H2O'] <= M * m.y_stg[3])
 m.constn33 = Constraint(expr = m.y_stg[1] + m.y_stg[2] + m.y_stg[3] == 1)
-#m.constn3333333 = Constraint(expr = m.y_stg[2] == 1)
 m.constn34 = Constraint(m.C, rule = lambda m, c : m.x[94,c] == m.x[91,c])
 m.constn35 = Constraint(m.C, rule = lambda m, c : m.x[95,c] == m.x[92,c])
 m.constn36 = Constraint(m.C, rule = lambda m, c : m.x[96,c] == m.x[93,c])
@@ -883,7 +874,7 @@ m.constDFM10 = Constraint(expr = m.S_react == ((pi * m.D**2) / 4 ) * m.L)       
 m.constDFM12 = Constraint(expr = m.x[6,'CO2'] == m.q_dfm * m.DFM_Weight / (m.t_ads/3600))
 m.constDFM13 = Constraint(expr = m.S_react * m.N_react * 0.95 * DFM_SPWeight >= m.DFM_Weight)
 m.constDFM14 = Constraint(expr = m.q_dfm == q_dfm_eq - q_dfm_eq*exp(-k_ads * m.t_ads))
-m.constDFM16 = Constraint(expr = m.Q_DFM == (((m.DFM_Weight*cp_DFM*(T_reaction-T_amb)*0.00028)+ DH_ads*m.x[63,'CO2']/3.6) - m.Q_H2 - m.Q_reaction) * operating_hours) #kWh
+#m.constDFM16 = Constraint(expr = m.Q_DFM == (((m.DFM_Weight*cp_DFM*(T_reaction-T_amb)*0.00028)+ DH_ads*m.x[63,'CO2']/3.6) - m.Q_H2 - m.Q_reaction) * operating_hours) #kWh
 m.constDFM17 = Constraint(expr = m.Q_H2 == m.x[5,'H2'] * 577/104) # ~ 577 kW energy for 104 kmol/hr @700C     ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
 m.constDFM18 = Constraint(expr = m.Q_reaction == m.x[63,'CO2'] * H_methanation/3.6) # ~ kW energy released in methanation
 
@@ -915,13 +906,10 @@ def q_isotherm_des(qs0, X, B0, Q_ads, T0_ads, t0_ads, a_ads):
 m.constTVS01 = Constraint(m.SS, rule = lambda m, s : 0.99* m.Dq[s] >= m.q[s])
 m.constTVS02 = Constraint(m.SS, rule = lambda m, s : m.q[s] >= 0)
 m.constTVS03 = Constraint(m.SS, rule = lambda m, s : m.q[s] == m.Dq[s] - m.Dq[s]*exp(-k_ads_TVSA * m.t_TVSA))
-#m.constTVS04 = Constraint(expr = m.t_TVSA == 3000)
 m.constTVS05 = Constraint(expr = m.x[6,'CO2'] == sum(m.q[s] * m.Sorbent_Weight * m.y_sorbent[s] / (m.t_TVSA/3600)  for s in m.SS))
 m.constTVS06 = Constraint(expr=sum(m.y_sorbent[s] for s in m.SS) == 1)
-m.constTVS000002 = Constraint(expr=m.y_sorbent['MIL-101(Cr)-PEI-800'] == 1)  # 'APDES-NFC', 'Tri-PE-MCM-41', 'MIL-101(Cr)-PEI-800', 'Lewatit-VPOC-106'  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 #m.constTVS002 = Constraint(expr = m.t_ads_TVSA == sum((-1*log(m.Dq[s] - m.q[s])* m.y_sorbent[s])/k_ads_TVSA for s in m.SS))
 #m.constTVS003 = Constraint(expr = m.t_ads_TVSA == 100) # simplified approach to prevent long process time
-# Sorbent price yet to be added
 
 # Net kmol CO2/kg Sorbents
 m.constTVS07 = Constraint(m.SS, rule = lambda m, s : m.Dq[s] == m.q_ads[s] - m.q_des[s])
@@ -943,7 +931,6 @@ m.constTVS11 = Constraint(expr = m.v_cont == (m.Q_air2/m.N_contactor)/((pi*m.D_c
 m.constTVS12 = Constraint(expr = m.DP_cont == 8 * m.L_cont * air_Mu * m.v_cont / Ri**2)  # Monolith Pressure drop constraint
 #m.constTVS22 = Constraint(expr = m.DP_cont == 7500 )  # Monolith Pressure drop constraint
 m.constTVS13 = Constraint(expr = m.DP_cont * m.y_AD[2] <= (m.DP_fan['f1']*m.y_f['f1']) + (m.DP_fan['f2']*m.y_f['f2']) + (m.DP_fan['f3']*m.y_f['f3']))
-
 m.constTVS14 = Constraint(expr = m.S_contactor == ((pi * m.D_cont**2) / 4 ) * m.L_cont)       # Contactor size equation (based on the monolith chamber only)
 
 
@@ -969,7 +956,7 @@ m.constPBR01 = Constraint(m.C, rule = lambda m, c : m.x[666,c] - (m.x[665,c] + S
 # ***************************** Steam Generation ******************************
 m.constSTG01= Constraint(expr = m.T_sat == T_LP * m.y_stg[1] + T_MP * m.y_stg[2] + T_HP * m.y_stg[3])
 m.constSTG02= Constraint(expr = m.T[8] >= DT_min + m.T_sat)
-m.constSTG04= Constraint(expr = m.Q_ex == sum(m.x[7,c] * Components[c]['cp'] for c in m.C)*(m.T[7] - m.T[8]))
+m.constSTG04= Constraint(expr = m.Q_ex == sum(m.x[7,c] * Components[c]['cp'] for c in m.C)*(m.T[7] - m.T[8]))  #kJ/h
 m.constSTG05= Constraint(expr = m.Q_ex == m.Q_LP + m.Q_MP + m.Q_HP)
 m.constSTG06= Constraint(expr = m.Q_LP <= M * m.y_stg[1])
 m.constSTG07= Constraint(expr = m.Q_MP <= M * m.y_stg[2])
@@ -990,9 +977,11 @@ m.constHX04 = Constraint(expr = m.A_Boiler == m.Q_ex / (U_Boiler * ((m.T[7].valu
 
 # Furnace
 m.constFRN01 = Constraint(expr = m.CAPEX_Furnace - (m.Ce_Furnace * (CEPCI_2023/CEPCI_2007)) == 0)
-# Cost function for Boiler
-m.constFRN02 = Constraint(expr = m.Ce_Furnace == (a_furnace + (b_furnace * 
-                                                            (0.54 ** n_furnace))))
+m.constFRN02 = Constraint(expr = m.OPEX_Furnace == Q_Furnace * kWh_cost * operating_hours) 
+# Cost function for furnace
+m.constFRN03 = Constraint(expr = m.Ce_Furnace == (a_furnace + (b_furnace * 
+                                                            ((Q_Furnace/1000) ** n_furnace))))
+
 
 # ******************************* Air-Cooler **********************************
 # CAPEX for Air-Cooler
@@ -1015,8 +1004,10 @@ m.constAC12 = Constraint(expr = m.y_AC_Z1 + m.y_AC_Z2 + m.y_AC_Z3 + m.y_AC_Z4 + 
 m.constAC13 = Constraint(expr = m.F_V == 650*m.y_AC_Z1 + 600*m.y_AC_Z2 + 550*m.y_AC_Z3 + 450*m.y_AC_Z4 + 400*m.y_AC_Z5)  # F_V in ft/min
 m.constAC14 = Constraint(expr = m.F_A == (m.Q_Aircooler/1.055)/((m.F_V *((m.T_air_Out*1.8+32)-(T_air_In*1.8+32))*1.95)+ 1e-9)) # F_A in ft2, Q in BTU/hr, Temp in F
 m.constAC15 = Constraint(expr = m.Y_AC == m.F_A/L_AC_tube) # Bundle width (ft)
-m.constAC16 = Constraint(expr = (m.T_air_Out*1.8+32) == (T_air_In*1.8+32) + ((m.Q_Aircooler/1.055)/((m.Y_AC*m.F_V*L_AC_tube*1.95)+ 1e-9)))
-m.constAC17 = Constraint(expr = m.A_AC_av == AC_Nr * (m.Y_AC/(AC_tube_gap/12))*3.14*(AC_tube_OD/12)*L_AC_tube) # Available heat transfer area (ft2)
+#m.constAC16 = Constraint(expr = (m.T_air_Out*1.8+32) == (T_air_In*1.8+32) + ((m.Q_Aircooler/1.055)/((m.Y_AC*m.F_V*L_AC_tube*1.95)+ 1e-9)))
+m.constAC16 = Constraint(expr = m.A_AC_av == AC_Nr * (m.Y_AC/(AC_tube_gap/12))*3.14*(AC_tube_OD/12)*L_AC_tube) # Available heat transfer area (ft2)
+m.constAC17 = Constraint(expr = m.A_AC_av >= m.A_Aircooler)
+
 # Air-Cooler break horse power
 m.constAC18 = Constraint(expr = m.BHP_Aircooler == (m.F_V*m.F_A*(m.T_air_Out + 273)*(m.DP_AC+0.1))/1.15e6)
 m.constAC19 = Constraint(expr = m.DP_AC == 0.0037*AC_Nr*(m.F_V/100)**1.8)
@@ -1044,17 +1035,106 @@ m.constCX = Constraint(expr = m.CAPEX - (m.CAPEX_FAN + m.CAPEX_DFM * m.y_AD[1] +
                                          + m.CAPEX_Aircooler + m.CAPEX_Separator + m.CAPEX_PVessel) * ACCR == 0)
 #m.constCX_ads = Constraint(expr = m.CAPEX_ads - (m.CAPEX_DFM * m.y_AD[1] + m.CAPEX_TVSA * m.y_AD[2]) == 0)
 m.constOX = Constraint(expr = m.OPEX - m.OPEX_FAN - (m.OPEX_TVSA*m.y_AD[2]) - (m.OPEX_DFM*m.y_AD[1]) 
-                       - (m.OPEX_AEL+m.OPEX_SOEL+m.OPEX_PEMEL) - m.OPEX_Aircooler == 0)
+                       - (m.OPEX_AEL+m.OPEX_SOEL+m.OPEX_PEMEL) - m.OPEX_Aircooler - m.OPEX_Furnace*m.y_furnace == 0)
 
 # Plant production rate
 #m.constpr04 = Constraint(expr = m.x[636,'CH4'] == methane_production)
+
+#######################  S E N S I T I V I T Y  ###############################
+
+# ~~~~~~~~~~~~~ VARIABLES ~~~~~~~~~~~~~~~~~~
+
+#m.sens001 = Constraint(expr= m.T_des == 120) # check the infeasibility of some sorbents in some temperatures!
+#m.sens002 = Constraint(expr= m.p_vac == 0.09)
+#m.sens003 = Constraint(expr= m.N_react == 16)
+#m.sens004 = Constraint(expr= m.N_contactor == 16)
+#m.sens005 = Constraint(expr= m.D == 4)
+#m.sens006 = Constraint(expr= m.D_cont == 1.5)
+#m.sens007 = Constraint(expr= m.L == 3)
+#m.sens008 = Constraint(expr= m.L_cont == 3)
+
+m.sens009 = Constraint(expr= m.t_ads == 1000)
+m.sens010 = Constraint(expr= m.t_TVSA == 1000)
+
+
+# Electrolysers
+m.sens011 = Constraint(expr = m.y_H2[2] == 1)           # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# Furnace
+m.sens012 = Constraint(expr = m.y_furnace == 0)         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# Air-Intake
+m.sens013 = Constraint(expr = m.y_f['f3'] == 1)         # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# Adsorption
+m.sens014 = Constraint(expr = m.y_AD[1] == 1)           # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+#m.sens001 = Constraint(expr=m.y_sorbent['Lewatit-VPOC-106'] == 1)  # 'APDES-NFC', 'Tri-PE-MCM-41', 'MIL-101(Cr)-PEI-800', 'Lewatit-VPOC-106'  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+#m.sens015 = Constraint(expr= m.N_fan1 == 20)
+#m.sens016 = Constraint(expr= m.N_fan2 == 46)
+#m.sens017 = Constraint(expr= m.N_fan3 == 3)
+#m.sens018 = Constraint(expr= m.N_react == 16)
+
+kWh_cost = 0.05 # [$/kWh] Electricity cost (Sendi (2022))
+U_Boiler = 118 #kJ/h-m2-C update Feb. 2024
+U_Boiler_LP = 118 #kJ/h-m2-C to be added to the superstructure
+U_Boiler_MP = 106 #kJ/h-m2-C to be added to the superstructure
+U_Boiler_HP = 86 #kJ/h-m2-C to be added to the superstructure
+DFM_unit_cost = 156.2 #$/kg DFM 15% Ni,1% Ru,10% K2O,74% CeO2-Al2O3 (20%-80%)
+Sorbent_unit_cost = 40 # $/kg (based on Sinha et al., 2017 for MIL-101 price       > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+DFM_SPWeight = 85.43 #kg of washcoat per m3 of monolith (Abdallah et al.,(2023))
+Sorbent_SPWeight = 85.43 #kg of washcoat per m3 of monolith (Abdallah et al.,(2023))
+q_dfm_eq = 1.152e-3 #100% of DFM amb. ads. capacity acc. to to Abdallah et al.,(2023) 1%Ru, 10%Na2O/γ-Al2O3 DFM > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+k_ads = 0.00025 # based on curve fitting data on 1%Ru, 10%Na2O/γ-Al2O3 DFM acc. to Abdallah et al.,(2023) > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > >
+DH_ads = 151.79 #NiRuNa/CeAl : -151.79 kJ/mol Enthalpy of adsorption
+#DH_ads = 121.29 #NiRuK/CeAl: -121.29 kJ/mol Enthalpy of adsorption
+#DH_ads = 31.17 #NiRuCa/CeAl: -31.17 kJ/mol Enthalpy of adsorption
+Ri = 0.00105
+
+"""# Function to run sensitivity analysis for a specific variable/parameter
+def run_sensitivity(var_name, lb, ub):
+    data_list = []
+
+    # Loop through the specified range for the variable/parameter
+    for value in range(lb, ub+1):
+        # Set the value within the model
+        var = getattr(m, var_name)
+        var.setlb(value)  # Set lower bound
+        var.setub(value)  # Set upper bound
+
+        # Solve the optimization problem
+        optimizer = SolverFactory('gams')
+        result = optimizer.solve(m, tee=True, solver='baron')
+
+        # Check if optimization was successful
+        if result.solver.termination_condition == TerminationCondition.optimal:
+            # Store results in a dictionary
+            sens_data = {
+                var_name: value,
+                'TAC': m.TAC(),
+                'CAPEX': m.CAPEX(),
+                'CAPEX_TVSA': m.CAPEX_TVSA()
+            }
+            data_list.append(sens_data)
+
+    # Define the Excel file name
+    excel_file = f'sensitivity_output_{var_name}.xlsx'
+
+    # Write the data to an Excel file
+    df = pd.DataFrame(data_list)
+    df.to_excel(excel_file, index=False)
+
+# Run sensitivity analysis for each variable/parameter
+#run_sensitivity('N_fan1', 1, 100)
+#run_sensitivity('N_fan2', 1, 100)
+run_sensitivity('N_fan3', 1, 20)
+run_sensitivity('N_react', 1, 20)
+#run_sensitivity('k_ads', 0.00025, 1)  # Since it's a parameter, lower and upper bounds are the same"""
+
 
 # solve
 solver=SolverFactory('gams')
 #io_options=dict(MaxTime=100)
 #results = solver.solve(m, tee=True, solver='baron', io_options=io_options)
 results = solver.solve(m, tee=True, solver='baron')
-#m.pprint()
+
 ###############################################################################
 
 # set the locale to use commas as thousands separators
@@ -1191,6 +1271,7 @@ for s in m.SS:
 print("* Calculated equilibrium capacity sorbents (Dq):")
 for s in m.SS:
     print("      ", s," :", round(m.Dq[s](),6), "kmol CO2/kg Sorbent")
+    print("y_",s, m.y_sorbent[s]())
 for s in m.SS:
     if m.y_sorbent[s]()==1:
         print("* The selected Sorbent: ", s)
@@ -1212,7 +1293,7 @@ print("* The Temperatures levels: ")
 print("* Boiler flue gas Temperature (T7): ", round(m.T[7](),1), " C")
 print("* Flue gas Exit Temperature (T8): ", round(m.T[8](),1), " C")
 print("* Steam Temperature (T_sat): ", round(m.T_sat(),1), " C")
-print("* Heat duty of the Biler: ", format_number(m.Q_ex()), "kJ")
+print("* Heat duty of the Boiler: ", format_number(m.Q_ex()), "kJ/h")
 print("* LMTD for boiler: ", round(((m.T[7]() - m.T[8]()) / log_term()),1))
 print("* Heat transfer Area of Boiler: ", format_number(m.A_Boiler()), "m2")
 print("* Steam revenue: ", format_number(m.Profit_Steam()), "USD")
@@ -1248,87 +1329,22 @@ print("L_Vessel: ", round(m.L_Vessel(),2),"m")
 
 print(50*".")
 
-print("* Furnace Cost: ", format_number(m.CAPEX_Furnace()), "USD")
+print("* Furnace Capital Cost: ", format_number(m.CAPEX_Furnace()*m.y_furnace()), "USD")
+print("* Furnace Operating Cost: ", format_number(m.OPEX_Furnace()*m.y_furnace()), "USD")
+
 
 print(50*"*")
-# Creating a list to store the data for each run
-data_list = []
-
-sens_data = {
-    'TAC': m.TAC(),
-    'CAPEX': m.CAPEX(),
-    'OPEX': m.OPEX(),
-    'Revenue': m.Profit(),
-    'CAPEX_FAN': m.CAPEX_FAN(),
-    'OPEX_FAN': m.OPEX_FAN(),
-    'N_fan': m.N_fan(),
-    'Fan_Power': m.power_fan1()*m.y_f['f1']() + m.power_fan2()*m.y_f['f2']()+m.power_fan3()*m.y_f['f3'](),
-    'CAPEX_H2': m.CAPEX_AEL()+m.CAPEX_SOEL()+m.CAPEX_PEMEL(),
-    'OPEX_H2': m.OPEX_AEL()+m.OPEX_SOEL()+m.OPEX_PEMEL(),
-    'CAPEX_TVSA': m.CAPEX_TVSA(),
-    'OPEX_TVSA': m.OPEX_TVSA(),
-    'N_contactor': m.N_contactor(),
-    'S_contactor': m.S_contactor(),
-    'v_cont': m.v_cont(),
-    'D_cont': m.D_cont(),
-    'L_cont': m.L_cont(),
-    'DP_cont': m.DP_cont(),
-    'Sorbent_Weight': m.Sorbent_Weight(),
-    'k_ads_TVSA': k_ads_TVSA,
-    'Ri': Ri,
-    'T_des': m.T_des(),
-    'p_vac': m.p_vac(),
-    'q': m.q['APDES-NFC'](),
-    'CAPEX_Boiler': m.CAPEX_Boiler(),
-    'A_Boiler': m.A_Boiler(),
-    'Revenue_Steam': m.Profit_Steam(),
-    }
-data_list.append(sens_data)
-# Define the CSV file name
-csv_file = 'sensitivity_output.csv'
-
-# Write the data to a CSV file
-with open(csv_file, mode='w', newline='') as file:
-    fieldnames = ['TAC', 'CAPEX', 'OPEX', 'Revenue', 
-                  'CAPEX_FAN', 'OPEX_FAN', 'N_fan', 'Fan_Power',
-                  'CAPEX_H2', 'OPEX_H2',
-                  'CAPEX_TVSA', 'OPEX_TVSA', 'N_contactor', 'S_contactor', 'v_cont', 'D_cont', 'L_cont', 'DP_cont', 'Sorbent_Weight', 'k_ads_TVSA', 'Ri', 'T_des', 'p_vac', 'q',
-                  'CAPEX_Boiler', 'A_Boiler', 'Revenue_Steam'
-                  ]
-    writer = csv.DictWriter(file, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(data_list)
 
 
-# Print a message to indicate that the data has been written to the CSV file
-print(f"Data has been written to '{csv_file}'.")
-
+# Creating a list to store the data for each OPTIMISATION run
 data_list2 = []
 
-sens_data2 = {
-    'TAC': m.TAC(),
-    'CAPEX': m.CAPEX(),
-    'CAPEX_TVSA': m.CAPEX_TVSA(),
-    }
-data_list2.append(sens_data2)
-# Define the CSV file name
-csv_file2 = 'sensitivity_output2.csv'
-
-# Write the data to a CSV file
-with open(csv_file2, mode='w', newline='') as file:
-    fieldnames = ['TAC', 'CAPEX',
-                  'CAPEX_TVSA' 
-                  ]
-    writer = csv.DictWriter(file, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(data_list2)
-
-# Print a message to indicate that the data has been written to the CSV file
-print(f"Data has been written to '{csv_file2}'.")
-
-data_list3 = []
-
-sens_data3 = {
+List_Var = {
+    'Fan Sys': next(Air_intake_units[f]['Name'] for f in m.A if m.y_f[f]() == 1),
+    'H2 Sys': next(H2_units[i] for i in m.H2 if m.y_H2[i]() == 1),
+    'Ads Sys': next(ADS_units[i] for i in m.ADS if m.y_AD[i]() == 1),
+    'Sorbent': next((s for s in m.SS if m.y_sorbent[s]()==1 and m.y_AD[2]() == 1), "DFM"),
+    'STG': next(STG_units[i] for i in m.SL if m.y_stg[i]() == 1),
     'TAC': m.TAC(),
     'CAPEX': m.CAPEX(),
     'OPEX': m.OPEX(),
@@ -1339,37 +1355,49 @@ sens_data3 = {
     'Fan_Power': m.power_fan1()*m.y_f['f1']() + m.power_fan2()*m.y_f['f2']()+m.power_fan3()*m.y_f['f3'](),
     'CAPEX_H2': m.CAPEX_AEL()+m.CAPEX_SOEL()+m.CAPEX_PEMEL(),
     'OPEX_H2': m.OPEX_AEL()+m.OPEX_SOEL()+m.OPEX_PEMEL(),
-    'CAPEX_DFM': m.CAPEX_DFM(),
-    'Q_DFM': m.Q_DFM(),
-    'N_react': m.N_react(),
-    'S_react': m.S_react(),
-    'v': m.v(),
-    'D': m.D(),
-    'L': m.L(),
-    'DP': m.DP(),
-    'DFM_Weight': m.DFM_Weight(),
-    'k_ads': k_ads,
+    'CAPEX_Furnace': m.CAPEX_Furnace()*m.y_furnace(),
+    'OPEX_Furnace': m.OPEX_Furnace()*m.y_furnace(),
+    'CAPEX_ADS': m.CAPEX_TVSA()*m.y_AD[2]()+m.CAPEX_DFM()*m.y_AD[1](),
+    'OPEX_ADS': m.OPEX_TVSA()*m.y_AD[2]()+m.OPEX_DFM()*m.y_AD[1](),
+    'N_cont/react': m.N_contactor()*m.y_AD[2]()+m.N_react()*m.y_AD[1](),
+    'S_cont/react': m.S_contactor()*m.y_AD[2]()+m.S_react()*m.y_AD[1](),
+    'v': m.v_cont()*m.y_AD[2]()+m.v()*m.y_AD[1](),
+    'D': m.D_cont()*m.y_AD[2]()+m.D()*m.y_AD[1](),
+    'L': m.L_cont()*m.y_AD[2]()+m.L()*m.y_AD[1](),
+    'DP': m.DP_cont()*m.y_AD[2]()+m.DP()*m.y_AD[1](),
+    'Sorb/DFM_Weight': m.Sorbent_Weight()*m.y_AD[2]()+m.DFM_Weight()*m.y_AD[1](),
+    'k': k_ads_TVSA*m.y_AD[2]()+k_ads*m.y_AD[1](),
     'Ri': Ri,
-    'q_dfm_eq': q_dfm_eq,
+    'kWh_cost0': kWh_cost,
+    'U_Boiler': U_Boiler,
+    'DFM_unit_cost': DFM_unit_cost,
+    'Sorbent_unit_cost': Sorbent_unit_cost,
+    'SPWeight': Sorbent_SPWeight*m.y_AD[2]()+DFM_SPWeight*m.y_AD[1](),
+    'T_des': m.T_des()*m.y_AD[2](),
+    'p_vac': m.p_vac()*m.y_AD[2](),
+    'q': (sum(m.q[s]()*m.y_sorbent[s]() for s in m.SS)*m.y_AD[2]())+m.q_dfm()*m.y_AD[1](),
+    'q_eq': (sum(m.Dq[s]()*m.y_sorbent[s]() for s in m.SS)*m.y_AD[2]())+q_dfm_eq*m.y_AD[1](),
+    't_ads': m.t_TVSA()*m.y_AD[2]()+m.t_ads()*m.y_AD[1](),
     'CAPEX_Boiler': m.CAPEX_Boiler(),
     'A_Boiler': m.A_Boiler(),
     'Revenue_Steam': m.Profit_Steam(),
+    'CAPEX_Aircooler': m.CAPEX_Aircooler(),
+    'OPEX_Aircooler': m.OPEX_Aircooler(),
+    'A_AC_av': m.A_AC_av(),
+    'CAPEX_PVessel': m.CAPEX_PVessel(),
+    'S_Vessel': m.S_Vessel()    
     }
-data_list3.append(sens_data3)
-# Define the CSV file name
-csv_file3 = 'sensitivity_output3.csv'
+data_list2.append(List_Var)
 
-# Write the data to a CSV file
-with open(csv_file3, mode='w', newline='') as file:
-    fieldnames = ['TAC', 'CAPEX', 'OPEX', 'Revenue', 
-                  'CAPEX_FAN', 'OPEX_FAN', 'N_fan', 'Fan_Power',
-                  'CAPEX_H2', 'OPEX_H2',
-                  'CAPEX_DFM', 'Q_DFM', 'N_react', 'S_react', 'v', 'D', 'L', 'DP', 'DFM_Weight', 'k_ads', 'Ri', 'q_dfm_eq',
-                  'CAPEX_Boiler', 'A_Boiler', 'Revenue_Steam'
-                  ]
-    writer = csv.DictWriter(file, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(data_list3)
+# Define the Excel file name
+excel_file2 = 'Optimisation_output.xlsx'
+
+# Convert data_list2 to a DataFrame
+df = pd.DataFrame(data_list2)
+
+# Write the data to an Excel file
+df.to_excel(excel_file2, index=False)
+
 
 # Print a message to indicate that the data has been written to the CSV file
-print(f"Data has been written to '{csv_file3}'.")
+print(f"Data has been written to '{excel_file2}'.")
